@@ -41,7 +41,7 @@ class HubYoungDL:
         for book in lib:
         	if book['id'] == int(ID):
         		return {
-        			'title': book['title'].replace(' ', '_'),
+        			'title': book['title'],
         			'sub': book['subtitle'],
         			'authors': book['author'],
         			'editor': book['editor'],
