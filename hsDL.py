@@ -6,6 +6,16 @@ import sqlite3
 import zipfile
 import fitz
 
+'''
+HOW TO USE:
+    - open book in hubscuola
+    - inspect element
+    - search "Token" or "Json" and find "loginTokenJson"
+    - copy the response dict
+    - paste it in "cookies.txt"
+    - run the script and enjoy
+'''
+
 toc= []
 def merge_pdf(extracted_files, output):
     pdffile = fitz.Document()
@@ -62,16 +72,17 @@ class HubYoungDL:
         cursor = db.cursor()
         query = cursor.execute("SELECT offline_value FROM offline_tbl WHERE offline_path=?", ("meyoung/publication/" + book_id,)).fetchone()
         shutil.rmtree("./publication")
-
+	
         pages = []
-        for chapter in json.loads(query[0])['indexContents']['chapters']:
+        query_dict = json.loads(query[0])
+        for chapter in query_dict['indexContents']['chapters']:
             url = f"https://ms-mms.hubscuola.it/public/{book_id}/{chapter['chapterId']}.zip?tokenId={self.token}&app=v2"
-            self.gen_toc(chapter, json.loads(query[0])['pagesId'])
+            self.gen_toc(chapter, query_dict['pagesId'])
             documents = self.session.get(url)
             with zipfile.ZipFile(io.BytesIO(documents.content)) as archive:
-                for file in sorted(archive.namelist()):
-                    if ".pdf" in file:
-                        with archive.open(file) as f:
+                for zip_info in sorted(archive.infolist(), key=lambda x: x.filename):
+                    if zip_info.filename.endswith(".pdf"):
+                        with archive.open(zip_info) as f:
                             pages.append(f.read())
         merge_pdf(pages, output_name)
 
