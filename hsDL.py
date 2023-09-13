@@ -78,12 +78,11 @@ class HubScuola:
 class PDFManager:
     def __init__(self, pdf_bytes, bookchapters):
         self.pdf_bytes = pdf_bytes
-        self.pdf = None
         self.load_pdf()
         self.toc = self.build_toc(bookchapters)
 
     def load_pdf(self):
-        self.pdf = fitz.open(self.pdf_bytes, filetype="pdf")
+        self.pdf = fitz.open(stream=self.pdf_bytes)
 
     def save(self, filename):
         self.pdf.set_toc(self.toc)
