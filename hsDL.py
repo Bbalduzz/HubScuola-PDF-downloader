@@ -1,114 +1,102 @@
-import io
-import json
-import shutil
 import requests
-import sqlite3
-import zipfile
 import fitz
+import sys
 
-class CREDS:
-    username = "your_username"
-    password = "your_pwd"
+CREDS = ("your_username", "your_password")
 
-if CREDS.username and CREDS.password:
-    datas = requests.get("https://bce.mondadorieducation.it//app/mondadorieducation/login/loginJsonp", params={"username": CREDS.username, "password": CREDS.password}).json()
-else:
-    '''
-    HOW TO USE:
-        - open book in hubscuola
-        - inspect element
-        - search "Token" or "Json" and find "loginTokenJson"
-        - copy the response dict
-        - paste it in "cookies.txt"
-        - run the script and enjoy
-    '''
-    with open('cookies.txt', 'r') as f:
-        datas = json.loads(f.read())
+class HubScuola:
+    BASE_URL = "https://ms-api.hubscuola.it"
+    PDF_URL = "https://ms-pdf.hubscuola.it"
 
-toc = []
-def merge_pdf(extracted_files, output):
-    pdffile = fitz.Document()
-    for pdf in extracted_files:
-        with open(output, 'wb') as handler:
-            handler.write(pdf)
-        pdffile.insert_pdf(fitz.open(stream=pdf, filetype="pdf"))
-
-    pdffile.set_toc(toc)
-    pdffile.save(output)
-
-def progress_bar(progress, total):
-    percent = 100 * (progress / float(total))
-    bar = '█' * int(percent) + '-' * (100 - int(percent))
-    print(f'\r[+] Downloading book... |{bar}| {percent:.2f}%', end='\r')
-
-class HubYoungDL:
-    def __init__(self):
-        self.session = requests.Session()
+    def __init__(self, username, password):
+        self.username = username
+        self.password = password
+        self.token = ''
         self.login()
 
     def login(self):
-        login_data = {
-            "username": datas["data"]['profile']["username"],
-            "jwt": datas["data"]["hubEncryptedUser"],
-            "sessionId": datas["data"]["sessionId"],
-        }
-        internal_login = self.session.post("https://ms-api.hubscuola.it/user/internalLogin", json=login_data).json()
-        self.token = internal_login["tokenId"]
-        self.session.headers["token-session"] = self.token
+        logindata = self.getlogindata()
+        session = self.getsessiontoken(
+            logindata["data"]["hubEncryptedUser"], 
+            logindata["data"]["username"], 
+            logindata["data"]["sessionId"]
+        )
+        self.token = session["tokenId"]
 
-    def get_book_info(self, ID):
-        lib = self.session.get("https://ms-api.hubscuola.it/getLibrary/young").json()
-        for book in lib:
-            if book['id'] == int(ID):
-                return {
-                    'title': book['title'],
-                    'sub': book['subtitle'],
-                    'authors': book['author'],
-                    'editor': book['editor'],
-                }
+    def getlogindata(self):
+        r = requests.get(
+            "https://bce.mondadorieducation.it//app/mondadorieducation/login/loginJsonp", 
+            params={"username": self.username, "password": self.password}
+        )
+        return r.json()
 
-    def gen_toc(self, chapter, pages_id):
-        sub_chap = chapter['children']
-        for i,sub in enumerate(sub_chap):
-            page_id = sub['children']
-            page_n = [pages_id.index(i)+1 for i in page_id]
-            toc.append([1, sub['title'], page_n[0]])
+    def getsessiontoken(self, jwt, internalusername, sessionid):
+        data = {"username": internalusername, "sessionId": sessionid, "jwt": jwt}
+        r = requests.post(f"{self.BASE_URL}/user/internalLogin", json=data)
+        return r.json()
 
-    def download_book(self, book_id, output_name):  # credits to @vvettoretti the sql snippet
-        publication = self.session.get(f"https://ms-mms.hubscuola.it/downloadPackage/{book_id}/publication.zip?tokenId={self.token}")
-        with zipfile.ZipFile(io.BytesIO(publication.content)) as archive:  # Sqlite cannot open db file from bytes stream
-            archive.extract("publication/publication.db")
-        db = sqlite3.connect("publication/publication.db")
-        cursor = db.cursor()
-        query = cursor.execute("SELECT offline_value FROM offline_tbl WHERE offline_path=?", ("meyoung/publication/" + book_id,)).fetchone()
-        shutil.rmtree("./publication")
-    
-        pages = []
-        query_dict = json.loads(query[0])
-        total_chps = len(query_dict)
-        progress_bar(0, total_chps)
-        for n,chapter in enumerate(query_dict['indexContents']['chapters']):
-            url = f"https://ms-mms.hubscuola.it/public/{book_id}/{chapter['chapterId']}.zip?tokenId={self.token}&app=v2"
-            self.gen_toc(chapter, query_dict['pagesId'])
-            documents = self.session.get(url)
-            with zipfile.ZipFile(io.BytesIO(documents.content)) as archive:
-                for zip_info in sorted(archive.infolist(), key=lambda x: x.filename):
-                    if zip_info.filename.endswith(".pdf"):
-                        with archive.open(zip_info) as f:
-                            pages.append(f.read())
-            progress_bar(n, total_chps)
-        merge_pdf(pages, output_name)
+    def getbookinfo(self, bookid):
+        r = requests.get(
+        	f"{self.BASE_URL}/meyoung/publication/{str(bookid)}", 
+        	headers={"Token-Session": self.token}
+        )
+        return r.json()
 
-if __name__ == '__main__':
-    url = input('Enter book URL:\n')
-    book_id = url.split('?')[0].removeprefix('https://young.hubscuola.it/viewer/')
-    dl = HubYoungDL()
-    book = dl.get_book_info(book_id)
-    print(f'''
-[+] Book Found:
-    - title: {book['title']}
-    - subtitle: {book['sub']}
-    - authors: {book['authors']}
-    - editor: {book['editor']}
+    def getauth(self, jwt, bookid):
+        r = requests.post(
+            f"{self.PDF_URL}/i/d/{bookid}/auth", 
+            json={"jwt": jwt, "origin": f"https://young.hubscuola.it/viewer/{bookid}?page=1"}, 
+            headers={"PSPDFKit-Platform": "web", "PSPDFKit-Version": "protocol=3, client=2020.6.0, client-git=63c8a36705"}
+        )
+        return r.json()
+
+    def downloadpdf(self, token, bookid, layerhandle):
+        r = requests.get(
+            f"{self.PDF_URL}/i/d/{bookid}/h/{layerhandle}/pdf?token={token}", 
+            stream=True
+        )
+        total_size = int(r.headers.get('content-length', 0))
+        downloaded = 0
+        file = b""
+        for data in r.iter_content(chunk_size=102400):
+            downloaded += len(data)
+            percentage = 100.0 * downloaded / total_size
+            self._display_progress_bar(percentage)
+            file += data
+        return file
+
+    @staticmethod
+    def _display_progress_bar(percentage):
+        bar_length = 50
+        block = int(round(bar_length * percentage / 100))   
+        progress = "|" + "=" * block + "-" * (bar_length - block) + "|"
+        sys.stdout.write(f"\r{progress} {percentage:.2f}%")
+        sys.stdout.flush()
+
+
+class PDFManager:
+    def __init__(self, pdf_bytes):
+        self.pdf_bytes = pdf_bytes
+        self.pdf = None
+        self.load_pdf()
+
+    def load_pdf(self):
+        self.pdf = fitz.Document(stream=self.pdf_bytes, filetype="pdf")
+
+    def save(self, filename):
+        self.pdf.save(filename)
+
+
+if __name__ == "__main__":
+    book_url = input('[+] Enter book url:\n')
+    book_id = book_url.split('?')[0].removeprefix('https://young.hubscuola.it/viewer/')
+    hub = HubScuola(*CREDS)
+    bookinfo = hub.getbookinfo(bookid)
+    print(f'''[>] Book Found: 
+  - title: {bookinfo['title']}
+  - isbn: {bookinfo['isbn']}
 ''')
-    dl.download_book(book_id, f"{book['title']}.pdf")
+    auth = hub.getauth(bookinfo["jwt"], bookid)
+    pdf_bytes = hub.downloadpdf(auth["token"], bookid, auth["layerHandle"])
+    pdf_manager = PDFManager(pdf_bytes)
+    pdf_manager.save("book.pdf")
