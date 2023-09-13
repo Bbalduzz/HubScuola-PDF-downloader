@@ -132,6 +132,5 @@ if __name__ == "__main__":
 ''')
     auth = hub.getauth(bookinfo["jwt"], bookid)
     pdf_bytes = hub.downloadpdf(auth["token"], bookid, auth["layerHandle"])
-    pdf_bytes = ''
     pdf_manager = PDFManager(pdf_bytes, bookinfo["indexContents"]["chapters"])
     pdf_manager.save(f"{bookinfo['title']}.pdf")
