@@ -59,7 +59,7 @@ class HubScuola:
         total_size = int(r.headers.get('content-length', 0))
         downloaded = 0
         file = b""
-        for data in r.iter_content(chunk_size=102400):
+        for data in r.iter_content(chunk_size=204800):
             downloaded += len(data)
             percentage = 100.0 * downloaded / total_size
             self._display_progress_bar(percentage)
