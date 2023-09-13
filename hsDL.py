@@ -1,6 +1,7 @@
 import requests
 import fitz
 import sys
+import json
 
 CREDS = ("your_username", "your_password")
 
@@ -75,28 +76,62 @@ class HubScuola:
 
 
 class PDFManager:
-    def __init__(self, pdf_bytes):
+    def __init__(self, pdf_bytes, bookchapters):
         self.pdf_bytes = pdf_bytes
         self.pdf = None
         self.load_pdf()
+        self.toc = self.build_toc(bookchapters)
 
     def load_pdf(self):
-        self.pdf = fitz.Document(stream=self.pdf_bytes, filetype="pdf")
+        self.pdf = fitz.open(self.pdf_bytes, filetype="pdf")
 
     def save(self, filename):
+        self.pdf.set_toc(self.toc)
         self.pdf.save(filename)
 
+    def process_children(self, children, bookinfo, current_level, pagecount):
+        toc_entries = []
+        for child in children:
+            if isinstance(child, int):
+                if child in bookinfo["pagesId"]:
+                    pagecount += 1
+            else:
+                title = child["title"]
+                if len(children) > 1:
+                    toc_entries.append([current_level, title, pagecount])
+                pagecount = self.process_grandchildren(child["children"], bookinfo, pagecount)
+        return toc_entries, pagecount
+
+    def process_grandchildren(self, grandchildren, bookinfo, pagecount):
+        for grandchild in grandchildren:
+    	    if grandchild in bookinfo["pagesId"]:
+                pagecount += 1
+        return pagecount
+
+    def build_toc(self, bookchapters):
+        toc = []
+        pagecount = 1
+        CHAPTER_LEVEL = 1
+        SUBCHAPTER_LEVEL = 2
+
+        for chapter in bookchapters:
+            toc.append([CHAPTER_LEVEL, chapter["title"], pagecount])
+            toc_entries, pagecount = self.process_children(chapter["children"], bookinfo, SUBCHAPTER_LEVEL, pagecount)
+            toc.extend(toc_entries)
+
+        return toc
 
 if __name__ == "__main__":
-    book_url = input('[+] Enter book url:\n')
-    book_id = book_url.split('?')[0].removeprefix('https://young.hubscuola.it/viewer/')
+    book_url = input('Enter book URL:\n')
+    bookid = book_url.split('?')[0].removeprefix('https://young.hubscuola.it/viewer/')
     hub = HubScuola(*CREDS)
     bookinfo = hub.getbookinfo(bookid)
     print(f'''[>] Book Found: 
-  - title: {bookinfo['title']}
-  - isbn: {bookinfo['isbn']}
+	- title: {bookinfo['title']}
+	- isbn: {bookinfo['isbn']}
 ''')
     auth = hub.getauth(bookinfo["jwt"], bookid)
     pdf_bytes = hub.downloadpdf(auth["token"], bookid, auth["layerHandle"])
-    pdf_manager = PDFManager(pdf_bytes)
-    pdf_manager.save("book.pdf")
+    pdf_bytes = ''
+    pdf_manager = PDFManager(pdf_bytes, bookinfo["indexContents"]["chapters"])
+    pdf_manager.save(f"{bookinfo['title']}.pdf")
